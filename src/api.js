@@ -1,7 +1,53 @@
 // Google Apps Script 연동을 위한 통신 모듈 (서버리스/백그라운드 없음)
+import SHA256 from 'crypto-js/sha256';
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxFSndpDtRHiH9D6LEpopkdfG-nZQiqh94omQcA06tVirGqdVyOW0IESVJbtx4X0uy02g/exec';
 
+// 공통 Fetch 래퍼 함수 (텍스트 우회 방식)
+const fetchGoogleScript = async (action, payload = {}) => {
+  const res = await fetch(SCRIPT_URL + '?action=' + action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  });
+  
+  const text = await res.text();
+  try {
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+    return data;
+  } catch (parseError) {
+    if (text.includes('<!DOCTYPE html>')) {
+      throw new Error('Google Apps Script 권한 오류: 스크립트 실행 권한 승인이 필요합니다.');
+    }
+    throw new Error(parseError.message || '서버 오류가 발생했습니다.');
+  }
+};
+
+// ================= 회원가입 / 로그인 =================
+export const registerUser = async (email, password, nickname) => {
+  const hashedPassword = SHA256(password).toString();
+  return await fetchGoogleScript('signup', { email, password_hash: hashedPassword, nickname, provider: 'email' });
+};
+
+export const loginUser = async (email, password) => {
+  const hashedPassword = SHA256(password).toString();
+  const data = await fetchGoogleScript('login', { email, password_hash: hashedPassword });
+  // 로그인 성공 시 로컬스토리지에 유저 정보 저장 (MVP용 간이 세션)
+  localStorage.setItem('user', JSON.stringify({ email: data.email, nickname: data.nickname, token: data.session_token }));
+  return data;
+};
+
+export const logoutUser = () => {
+  localStorage.removeItem('user');
+};
+
+export const getCurrentUser = () => {
+  const user = localStorage.getItem('user');
+  return user ? JSON.parse(user) : null;
+};
+
+// ================= 공고 / 포트폴리오 =================
 export const fetchJobs = async () => {
   try {
     const res = await fetch(`${SCRIPT_URL}?action=getJobs`);
@@ -14,64 +60,27 @@ export const fetchJobs = async () => {
 };
 
 export const fetchPortfolios = async () => {
-  // 포트폴리오 목록 읽기는 현재 Apps Script에 getPortfolios 액션이 미구현 상태이므로 임시 빈 배열
-  // 필요시 Apps Script의 doGet에 getPortfolios 로직 추가 후 아래 코드 사용
-  /*
-  const res = await fetch(`${SCRIPT_URL}?action=getPortfolios`);
-  return await res.json();
-  */
   return [];
 };
 
 export const applyForJob = async (jobId) => {
-  // 원래라면 Applications 시트에 써야하지만, MVP 데모를 위해 지원 알림만 처리
   console.log(`Job applied: ${jobId}`);
   return { status: 'applied', job_id: jobId };
 };
 
 export const uploadPortfolio = async (title, file) => {
   const imageUrl = 'https://via.placeholder.com/300?text=' + encodeURIComponent(title);
+  const user = getCurrentUser();
+  const designerId = user ? user.nickname : '익명 디자이너';
   
-  try {
-    const res = await fetch(SCRIPT_URL + '?action=createPortfolio', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ 
-        designer_id: '익명 디자이너',
-        title: title, 
-        image_url: imageUrl, 
-        description: '새 포트폴리오' 
-      })
-    });
-    
-    const text = await res.text();
-    try {
-      const data = JSON.parse(text);
-      if (data.error) {
-        throw new Error(data.error);
-      }
-      return data;
-    } catch (parseError) {
-      // JSON 파싱 실패 시 HTML 에러 페이지 반환된 것임 (권한 문제 등)
-      throw new Error('Google Apps Script 응답 오류 (HTML 반환됨). Apps Script 권한 승인이 필요할 수 있습니다.');
-    }
-  } catch (error) {
-    console.error('Upload failed:', error);
-    alert('업로드 실패: ' + error.message);
-    throw error;
-  }
+  return await fetchGoogleScript('createPortfolio', {
+    designer_id: designerId,
+    title: title, 
+    image_url: imageUrl, 
+    description: '새 포트폴리오' 
+  });
 };
 
 export const createJob = async (jobData) => {
-  try {
-    const res = await fetch(SCRIPT_URL + '?action=createJob', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(jobData)
-    });
-    return await res.json();
-  } catch (error) {
-    console.error('Job creation failed:', error);
-    throw error;
-  }
+  return await fetchGoogleScript('createJob', jobData);
 };
