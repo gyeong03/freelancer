@@ -60,7 +60,14 @@ export const fetchJobs = async () => {
 };
 
 export const fetchPortfolios = async () => {
-  return [];
+  try {
+    const res = await fetch(`${SCRIPT_URL}?action=getPortfolios`);
+    if (!res.ok) throw new Error('Network response was not ok');
+    return await res.json();
+  } catch (error) {
+    console.error('Failed to fetch portfolios:', error);
+    return [];
+  }
 };
 
 export const applyForJob = async (jobId) => {
